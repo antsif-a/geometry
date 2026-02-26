@@ -127,7 +127,7 @@ target('imgui')
         {public = true})
 
 
-target('rapier++')
+target('geometry++')
     set_kind('binary')
     set_languages('c++23')
     add_cxflags( 
