@@ -7,7 +7,10 @@ export module glfw;
 import std;
 import glm;
 
+import glfw.core;
+
 using std::println;
+using std::to_underlying;
 using std::format;
 using std::string;
 using std::string_view;
@@ -15,10 +18,6 @@ using std::unordered_map;
 using std::function;
 using std::runtime_error;
 using namespace glm;
-
-export {
-#include "glfw.hpp"
-}
 
 export namespace glfw
 {
@@ -58,6 +57,26 @@ export namespace glfw
             return vec2((float) xpos, (float) ypos);
         }
 
+        void on_key(void (*cb) (glfw::window, Key, int, Action, Modifier)) {
+            glfwSetKeyCallback(handle, (GLFWkeyfun) cb);
+        }
+
+        void on_cursor(void (*cb) (window, double, double)) {
+            glfwSetCursorPosCallback(handle, (GLFWcursorposfun) cb);
+        }
+
+        void on_framebuffer_resize(void (*cb) (window, int, int)) {
+            glfwSetFramebufferSizeCallback(handle, (GLFWframebuffersizefun) cb);
+        }
+
+        void set_cursor_mode(CursorMode mode) {
+            glfwSetInputMode(handle, GLFW_CURSOR, (int) mode);
+        }
+
+        void set_raw_mouse_motion(bool value) {
+            glfwSetInputMode(handle, GLFW_RAW_MOUSE_MOTION, value);
+        }
+
         operator GLFWwindow * () {
             return handle;
         }
@@ -73,12 +92,12 @@ export namespace glfw
         glfwSetErrorCallback(error_callback);
     }
 
-    void window_hint(int hint, int value) {
-        glfwWindowHint(hint, value);
+    void window_hint(WindowHint hint, int value) {
+        glfwWindowHint(to_underlying(hint), value);
     }
 
-    void window_hint(int hint, const char * value) {
-        glfwWindowHintString(hint, value);
+    void window_hint(WindowHint hint, const char * value) {
+        glfwWindowHintString(to_underlying(hint), value);
     }
 
     window create_window(
@@ -108,27 +127,6 @@ export namespace glfw
 
     void swap_interval(int interval) {
         glfwSwapInterval(interval);
-    }
-
-    // --- input ---
-    void set_key_cb(window w, void (*cb) (window, Key, int, KeyAction, int)) {
-        glfwSetKeyCallback(w, (GLFWkeyfun) cb);
-    }
-
-    void set_cursor_cb(window w, void (*cb) (window, double, double)) {
-        glfwSetCursorPosCallback(w, (GLFWcursorposfun) cb);
-    }
-
-    void set_framebuffer_size_cb(window w, void (*cb) (window, int, int)) {
-        glfwSetFramebufferSizeCallback(w, (GLFWframebuffersizefun) cb);
-    }
-
-    void set_cursor_mode(window w, CursorMode mode) {
-        glfwSetInputMode(w, GLFW_CURSOR, (int) mode);
-    }
-
-    void set_raw_mouse_motion(window w, bool value) {
-        glfwSetInputMode(w, GLFW_RAW_MOUSE_MOTION, value);
     }
 
     bool is_raw_mouse_motion_supported() {

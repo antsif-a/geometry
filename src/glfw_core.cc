@@ -1,66 +1,78 @@
-enum struct CursorMode : int {
+module;
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
+export module glfw.core;
+
+import std;
+
+using std::to_underlying;
+
+export enum struct CursorMode : int {
     Normal = GLFW_CURSOR_NORMAL,
     Hidden = GLFW_CURSOR_HIDDEN,
     Disabled = GLFW_CURSOR_DISABLED,
     Captured = GLFW_CURSOR_CAPTURED
 };
 
-namespace WindowHint
-{
-    constexpr auto Focused = GLFW_FOCUSED;
-    constexpr auto Iconified = GLFW_ICONIFIED;
-    constexpr auto Resizable = GLFW_RESIZABLE;
-    constexpr auto Visible = GLFW_VISIBLE;
-    constexpr auto Decorated = GLFW_DECORATED;
-    constexpr auto AutoIconify = GLFW_AUTO_ICONIFY;
-    constexpr auto Floating = GLFW_FLOATING;
-    constexpr auto Maximized = GLFW_MAXIMIZED;
-    constexpr auto CenterCursor = GLFW_CENTER_CURSOR;
-    constexpr auto TransparentFramebuffer = GLFW_TRANSPARENT_FRAMEBUFFER;
-    constexpr auto Hovered = GLFW_HOVERED;
-    constexpr auto FocusOnShow = GLFW_FOCUS_ON_SHOW;
-    constexpr auto MousePassthrough = GLFW_MOUSE_PASSTHROUGH;
-    constexpr auto PositionX = GLFW_POSITION_X;
-    constexpr auto PositionY = GLFW_POSITION_Y;
-    constexpr auto RedBits = GLFW_RED_BITS;
-    constexpr auto GreenBits = GLFW_GREEN_BITS;
-    constexpr auto BlueBits = GLFW_BLUE_BITS;
-    constexpr auto AlphaBits = GLFW_ALPHA_BITS;
-    constexpr auto DepthBits = GLFW_DEPTH_BITS;
-    constexpr auto StencilBits = GLFW_STENCIL_BITS;
-    constexpr auto AccumRedBits = GLFW_ACCUM_RED_BITS;
-    constexpr auto AccumGreenBits = GLFW_ACCUM_GREEN_BITS;
-    constexpr auto AccumBlueBits = GLFW_ACCUM_BLUE_BITS;
-    constexpr auto AccumAlphaBits = GLFW_ACCUM_ALPHA_BITS;
-    constexpr auto AuxBuffers = GLFW_AUX_BUFFERS;
-    constexpr auto Stereo = GLFW_STEREO;
-    constexpr auto Samples = GLFW_SAMPLES;
-    constexpr auto SrgbCapable = GLFW_SRGB_CAPABLE;
-    constexpr auto RefreshRate = GLFW_REFRESH_RATE;
-    constexpr auto Doublebuffer = GLFW_DOUBLEBUFFER;
-    constexpr auto ClientApi = GLFW_CLIENT_API;
-    constexpr auto ContextVersionMajor = GLFW_CONTEXT_VERSION_MAJOR;
-    constexpr auto ContextVersionMinor = GLFW_CONTEXT_VERSION_MINOR;
-    constexpr auto ContextRevision = GLFW_CONTEXT_REVISION;
-    constexpr auto ContextRobustness = GLFW_CONTEXT_ROBUSTNESS;
-    constexpr auto OpenglForwardCompat = GLFW_OPENGL_FORWARD_COMPAT;
-    constexpr auto ContextDebug = GLFW_CONTEXT_DEBUG;
-    constexpr auto OpenglDebugContext = GLFW_OPENGL_DEBUG_CONTEXT;
-    constexpr auto OpenglProfile = GLFW_OPENGL_PROFILE;
-    constexpr auto ContextReleaseBehavior = GLFW_CONTEXT_RELEASE_BEHAVIOR;
-    constexpr auto ContextNoError = GLFW_CONTEXT_NO_ERROR;
-    constexpr auto ContextCreationApi = GLFW_CONTEXT_CREATION_API;
-    constexpr auto ScaleToMonitor = GLFW_SCALE_TO_MONITOR;
-    constexpr auto ScaleFramebuffer = GLFW_SCALE_FRAMEBUFFER;
-    constexpr auto CocoaRetinaFramebuffer = GLFW_COCOA_RETINA_FRAMEBUFFER;
-    constexpr auto CocoaFrameName = GLFW_COCOA_FRAME_NAME;
-    constexpr auto CocoaGraphicsSwitching = GLFW_COCOA_GRAPHICS_SWITCHING;
-    constexpr auto X11ClassName = GLFW_X11_CLASS_NAME;
-    constexpr auto X11InstanceName = GLFW_X11_INSTANCE_NAME;
-    constexpr auto Win32KeyboardMenu = GLFW_WIN32_KEYBOARD_MENU;
-    constexpr auto Win32Showdefault = GLFW_WIN32_SHOWDEFAULT;
-    constexpr auto WaylandAppId = GLFW_WAYLAND_APP_ID;
+export enum struct WindowHint : int {
+    Focused = GLFW_FOCUSED,
+    Iconified = GLFW_ICONIFIED,
+    Resizable = GLFW_RESIZABLE,
+    Visible = GLFW_VISIBLE,
+    Decorated = GLFW_DECORATED,
+    AutoIconify = GLFW_AUTO_ICONIFY,
+    Floating = GLFW_FLOATING,
+    Maximized = GLFW_MAXIMIZED,
+    CenterCursor = GLFW_CENTER_CURSOR,
+    TransparentFramebuffer = GLFW_TRANSPARENT_FRAMEBUFFER,
+    Hovered = GLFW_HOVERED,
+    FocusOnShow = GLFW_FOCUS_ON_SHOW,
+    MousePassthrough = GLFW_MOUSE_PASSTHROUGH,
+    PositionX = GLFW_POSITION_X,
+    PositionY = GLFW_POSITION_Y,
+    RedBits = GLFW_RED_BITS,
+    GreenBits = GLFW_GREEN_BITS,
+    BlueBits = GLFW_BLUE_BITS,
+    AlphaBits = GLFW_ALPHA_BITS,
+    DepthBits = GLFW_DEPTH_BITS,
+    StencilBits = GLFW_STENCIL_BITS,
+    AccumRedBits = GLFW_ACCUM_RED_BITS,
+    AccumGreenBits = GLFW_ACCUM_GREEN_BITS,
+    AccumBlueBits = GLFW_ACCUM_BLUE_BITS,
+    AccumAlphaBits = GLFW_ACCUM_ALPHA_BITS,
+    AuxBuffers = GLFW_AUX_BUFFERS,
+    Stereo = GLFW_STEREO,
+    Samples = GLFW_SAMPLES,
+    SrgbCapable = GLFW_SRGB_CAPABLE,
+    RefreshRate = GLFW_REFRESH_RATE,
+    Doublebuffer = GLFW_DOUBLEBUFFER,
+    ClientApi = GLFW_CLIENT_API,
+    ContextVersionMajor = GLFW_CONTEXT_VERSION_MAJOR,
+    ContextVersionMinor = GLFW_CONTEXT_VERSION_MINOR,
+    ContextRevision = GLFW_CONTEXT_REVISION,
+    ContextRobustness = GLFW_CONTEXT_ROBUSTNESS,
+    OpenglForwardCompat = GLFW_OPENGL_FORWARD_COMPAT,
+    ContextDebug = GLFW_CONTEXT_DEBUG,
+    OpenglDebugContext = GLFW_OPENGL_DEBUG_CONTEXT,
+    OpenglProfile = GLFW_OPENGL_PROFILE,
+    ContextReleaseBehavior = GLFW_CONTEXT_RELEASE_BEHAVIOR,
+    ContextNoError = GLFW_CONTEXT_NO_ERROR,
+    ContextCreationApi = GLFW_CONTEXT_CREATION_API,
+    ScaleToMonitor = GLFW_SCALE_TO_MONITOR,
+    ScaleFramebuffer = GLFW_SCALE_FRAMEBUFFER,
+    CocoaRetinaFramebuffer = GLFW_COCOA_RETINA_FRAMEBUFFER,
+    CocoaFrameName = GLFW_COCOA_FRAME_NAME,
+    CocoaGraphicsSwitching = GLFW_COCOA_GRAPHICS_SWITCHING,
+    X11ClassName = GLFW_X11_CLASS_NAME,
+    X11InstanceName = GLFW_X11_INSTANCE_NAME,
+    Win32KeyboardMenu = GLFW_WIN32_KEYBOARD_MENU,
+    Win32Showdefault = GLFW_WIN32_SHOWDEFAULT,
+    WaylandAppId = GLFW_WAYLAND_APP_ID
+};
 
+export namespace glfw
+{
     constexpr auto NoApi = GLFW_NO_API;
     constexpr auto OpenglApi = GLFW_OPENGL_API;
     constexpr auto OpenglEsApi = GLFW_OPENGL_ES_API;
@@ -97,7 +109,7 @@ namespace WindowHint
     constexpr auto AnyPosition = GLFW_ANY_POSITION;
 }
 
-enum struct Key : uint16_t
+export enum struct Key : int
 {
     Space = GLFW_KEY_SPACE,
     Apostrophe = GLFW_KEY_APOSTROPHE,
@@ -219,17 +231,17 @@ enum struct Key : uint16_t
     RightAlt = GLFW_KEY_RIGHT_ALT,
     RightSuper = GLFW_KEY_RIGHT_SUPER,
     Menu = GLFW_KEY_MENU,
-    Last = GLFW_KEY_LAST,
+    Last = GLFW_KEY_LAST
 };
 
-enum struct KeyAction : uint8_t
+export enum struct Action : int
 {
     Release = GLFW_RELEASE,
     Press = GLFW_PRESS,
     Repeat = GLFW_REPEAT,
 };
 
-enum struct KeyModifier : uint8_t
+export enum struct Modifier : int
 {
     None = 0,
     Shift = GLFW_MOD_SHIFT,
@@ -237,17 +249,25 @@ enum struct KeyModifier : uint8_t
     Alt = GLFW_MOD_ALT,
     Super = GLFW_MOD_SUPER,
     CapsLock = GLFW_MOD_CAPS_LOCK,
-    NumLock = GLFW_MOD_NUM_LOCK,
+    NumLock = GLFW_MOD_NUM_LOCK
 };
 
-enum struct MouseButton : uint8_t
+export Modifier operator|(Modifier a, Modifier b) {
+    return static_cast<Modifier>(to_underlying(a) | to_underlying(b));
+}
+
+export enum struct Mouse : int
 {
-    Left,
-    Right,
-    Middle,
+    Button1,
+    Button2,
+    Button3,
     Button4,
     Button5,
     Button6,
     Button7,
-    Button8
+    Button8,
+ 
+    Left = Button1,
+    Right = Button2,
+    Middle = Button3   
 };

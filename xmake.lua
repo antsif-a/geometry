@@ -10,8 +10,8 @@ set_toolchains('gcc')
 set_optimize('fastest')
 add_cxflags(
     '-ffast-math', '-fno-finite-math-only', '-march=native')
-add_ldflags("-static-libstdc++", "-static-libgcc")
-set_policy('build.optimization.lto', true)
+-- add_ldflags("-static-libstdc++", "-static-libgcc")
+-- set_policy('build.optimization.lto', true)
 
 rule('wayland-protocols')
     set_extensions('.xml')
@@ -130,14 +130,8 @@ target('imgui')
 target('geometry++')
     set_kind('binary')
     set_languages('c++23')
-    add_cxflags( 
-        '-fvisibility=hidden', '-fvisibility-inlines-hidden')
-    add_ldflags('-s')
+    --add_cxflags(
+    --    '-fvisibility=hidden', '-fvisibility-inlines-hidden')
+    --add_ldflags('-s')
     add_deps('glfw', 'imgui', 'glm')
-    add_files(
-        'src/main.cc',
-        'src/camera.cc',
-        'src/geometry.cc',
-        'src/glcore.cppm',
-        'src/gl.cc',
-        'src/glfw.cc')
+    add_files('src/*.cc')

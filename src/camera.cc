@@ -14,7 +14,7 @@ export struct lerp_camera {
     const float mouse_sensitivity;
     const float key_sensitivity;
     const vec3 up;
-    
+
     bitset<6> movement_bits;
     vec3 position;
     vec3 front;
@@ -53,11 +53,11 @@ export struct lerp_camera {
         target_velocity += (float) (movement_bits[Up]    - movement_bits[Down]) * up;
         target_velocity += (float) (movement_bits[Front] - movement_bits[Back]) * front;
 
-        velocity = mix(velocity, target_velocity * dt * key_sensitivity, 0.5);
+        velocity = mix(velocity, target_velocity * dt * key_sensitivity, 0.3);
         position += velocity;
     }
 
     mat4 compute_view_matrix() {
         return lookAt(position, position + front, up);
-    }   
+    }
 };
