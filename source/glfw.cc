@@ -12,9 +12,12 @@ import glfw.core;
 using std::println;
 using std::to_underlying;
 using std::format;
+using std::is_same_v;
+using std::decay_t;
 using std::string;
 using std::string_view;
 using std::unordered_map;
+using std::variant;
 using std::function;
 using std::runtime_error;
 using namespace glm;
@@ -25,19 +28,13 @@ export namespace glfw
         error(const char * description)
             : runtime_error(description) {}
     };
-   
+
     void error_callback(int, const char * description) {
         throw error(description);
     }
 
-    void init() {
-        if (!glfwInit())
-            throw runtime_error("Could not initialize window framework");
-    }
-
-    struct window {
-        window(GLFWwindow * handle)
-            : handle(handle) {}
+    struct window_view {
+        GLFWwindow * handle;
 
         bool should_close() {
             return glfwWindowShouldClose(handle);
@@ -53,19 +50,19 @@ export namespace glfw
 
         vec2 get_cursor_position() {
             double xpos, ypos;
-            glfwGetCursorPos(handle, &xpos, &ypos); 
+            glfwGetCursorPos(handle, &xpos, &ypos);
             return vec2((float) xpos, (float) ypos);
         }
 
-        void on_key(void (*cb) (glfw::window, Key, int, Action, Modifier)) {
+        void on_key(void (*cb) (window_view, Key, int, Action, Modifier)) {
             glfwSetKeyCallback(handle, (GLFWkeyfun) cb);
         }
 
-        void on_cursor(void (*cb) (window, double, double)) {
+        void on_cursor(void (*cb) (window_view, double, double)) {
             glfwSetCursorPosCallback(handle, (GLFWcursorposfun) cb);
         }
 
-        void on_framebuffer_resize(void (*cb) (window, int, int)) {
+        void on_framebuffer_resize(void (*cb) (window_view, int, int)) {
             glfwSetFramebufferSizeCallback(handle, (GLFWframebuffersizefun) cb);
         }
 
@@ -77,40 +74,53 @@ export namespace glfw
             glfwSetInputMode(handle, GLFW_RAW_MOUSE_MOTION, value);
         }
 
-        operator GLFWwindow * () {
-            return handle;
-        }
-
-        GLFWwindow * handle;
     };
 
-    void set_current_context(window window) {
-        glfwMakeContextCurrent(window);
+    struct window: public window_view {
+        window(GLFWwindow * handle)
+            : window_view(handle) {}
+
+        ~window() {
+            glfwDestroyWindow(handle);
+            glfwTerminate();
+        }
+
+        window(const window &) = delete;
+    };
+
+    void set_current_context(window & window) {
+        glfwMakeContextCurrent(window.handle);
     }
 
     void set_default_error_handler() {
         glfwSetErrorCallback(error_callback);
     }
 
-    void window_hint(WindowHint hint, int value) {
-        glfwWindowHint(to_underlying(hint), value);
-    }
-
-    void window_hint(WindowHint hint, const char * value) {
-        glfwWindowHintString(to_underlying(hint), value);
-    }
-
     window create_window(
-        int w,
-        int h,
+        int width,
+        int height,
         string_view title,
-        GLFWmonitor * monitor = nullptr,
-        GLFWwindow * share = nullptr
+        unordered_map<WindowHint, variant<int, string>> hints = {}
     ) {
-        GLFWwindow * window = glfwCreateWindow(w, h, title.data(), monitor, share);
-        if (!window)
+        if (!glfwInit())
+            throw runtime_error("Could not initialize window framework");
+        for (const auto & [key, value] : hints) {
+            value.visit(
+                [&] <typename T> (T && arg) {
+                    if constexpr (is_same_v<decay_t<T>, int>) {
+                        glfwWindowHint(to_underlying(key), arg);
+                    } else if constexpr (is_same_v<decay_t<T>, string &&>) {
+                        glfwWindowHintString(to_underlying(key), arg.c_str());
+                    }
+                }
+            );
+
+        }
+
+        GLFWwindow * window = glfwCreateWindow(width, height, title.data(), glfwGetPrimaryMonitor(), nullptr);
+        if (window == nullptr)
             throw runtime_error("Could not create window");
-        return window;
+        return glfw::window(window);
     }
 
     void set_time(double time) {

@@ -8,18 +8,18 @@ import glm;
 import gl.core;
 
 using std::println;
-using std::format;
-using std::string;
-using std::string_view;
-using std::span;
+using std::to_underlying;
 using std::array;
+using std::format;
+using std::is_same_v;
 using std::runtime_error;
 using std::size_t;
-using std::is_same_v;
-using std::to_underlying;
+using std::span;
+using std::string;
+using std::string_view;
+using std::unordered_map;
 
-using glm::vec;
-using glm::vec4;
+using namespace glm;
 
 namespace gl {
     #define X(F) \
@@ -115,11 +115,6 @@ export namespace gl
             if (name != 0)
                 destructor(name);
         }
-
-
-        explicit operator GLuint() {
-            return name;
-        }
     };
 
     #define object_t(T) object<glCreate##T, glDelete##T>
@@ -190,6 +185,13 @@ export namespace gl
         glNamedBufferStorage(b, data.size_bytes(), data.data(), flags);
         return buffer(b);
     }
+
+    template<typename T>
+    buffer store(T * data, size_t size, GLbitfield flags = DEFAULT_BUFFER_STORAGE_FLAGS) {
+        GLuint b = glCreateBuffer();
+        glNamedBufferStorage(b, size, data, flags);
+        return buffer(b);
+    }
     /* --- */
 
     /* --- vertex array --- */
@@ -246,22 +248,93 @@ export namespace gl
     };
     /* --- */
 
+
     /* --- program --- */
+    unordered_map<string, GLint> make_uniform_map(GLuint program) {
+        GLint uniform_count, uniform_block_count;
+        glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &uniform_count);
+        glGetProgramiv(program, GL_ACTIVE_UNIFORM_BLOCKS, &uniform_block_count);
+
+        if (uniform_count + uniform_block_count <= 0)
+            return {};
+
+        unordered_map<string, GLint> m(uniform_count + uniform_block_count);
+
+        GLint maxlen;
+        GLsizei length;
+        GLint size;
+        GLenum type;
+
+        if (uniform_count > 0) {
+            glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &maxlen);
+            GLchar name[maxlen];
+            for (GLint i = 0; i < uniform_count; i++) {
+                glGetActiveUniform(program, i, maxlen, &length, &size, &type, name);
+                m[std::string(name, length)] = glGetUniformLocation(program, name);
+            }
+        }
+
+        if (uniform_block_count > 0) {
+            glGetProgramiv(program, GL_ACTIVE_UNIFORM_BLOCK_MAX_NAME_LENGTH, &maxlen);
+            GLchar name[maxlen];
+            for(GLint i = 0; i < uniform_block_count; i++) {
+                glGetActiveUniformBlockName(program, i, maxlen, &length, name);
+                m[std::string(name, length)] = glGetUniformBlockIndex(program, name);
+            }
+        }
+        return m;
+    }
+
     struct program: program_t {
+        unordered_map<string, GLint> uniform_map;
+
         void attach_shader(shader & shader) {
            glAttachShader(name, shader.name);
         }
 
         void link() {
             glLinkProgram(name);
+            uniform_map = make_uniform_map(name);
         }
 
         void use() {
             glUseProgram(name);
         }
 
-        GLuint get_uniform_location(const char * uniform_name) {
-            return glGetUniformLocation(name, uniform_name);
+        GLint get_uniform_location(string name) {
+            return uniform_map[name];
+        }
+
+        void uniform(string name, bool value) {
+            glUniform1ui(get_uniform_location(name), value);
+        }
+
+        void uniform(string name, unsigned int value) {
+            glUniform1ui(get_uniform_location(name), value);
+        }
+
+        void uniform(string name, int value) {
+            glUniform1i(get_uniform_location(name), value);
+        }
+
+        void uniform(string name, float value) {
+            glUniform1f(get_uniform_location(name), value);
+        }
+
+        void uniform(string name, vec3 value) {
+            glUniform3fv(get_uniform_location(name), 1, value_ptr(value));
+        }
+
+        void uniform(string name, vec4 value) {
+            glUniform4fv(get_uniform_location(name), 1, value_ptr(value));
+        }
+
+        void uniform(string name, mat3 value) {
+            glUniformMatrix3fv(get_uniform_location(name), 1, GL_FALSE, value_ptr(value));
+        }
+
+        void uniform(string name, mat4 value) {
+            glUniformMatrix4fv(get_uniform_location(name), 1, GL_FALSE, value_ptr(value));
         }
     };
     /* --- */
@@ -287,6 +360,37 @@ export namespace gl
         vertex_array va;
         buffer vb;
         buffer eb;
+        GLsizei count;
+        GLenum type;
+        size_t offset;
+
+        void draw(DrawMode mode) {
+            glBindVertexArray(va.name);
+            glDrawElements(
+                to_underlying(mode),
+                count,
+                type,
+                reinterpret_cast<const void *>(offset)
+            );
+        }
+
+        void draw(DrawMode mode, GLsizei instance_count) {
+            glBindVertexArray(va.name);
+            glDrawElementsInstanced(
+                to_underlying(mode),
+                count,
+                type,
+                reinterpret_cast<const void *>(offset),
+                instance_count
+            );
+        }
+    };
+
+    struct mesh_with_normals {
+        vertex_array va;
+        buffer pb;
+        buffer nb;
+        buffer eb;
         size_t count;
         GLenum type;
         size_t offset;
@@ -295,31 +399,77 @@ export namespace gl
             glBindVertexArray(va.name);
             glDrawElements(to_underlying(mode), count, type, reinterpret_cast<const void *>(offset));
         }
+        void draw(DrawMode mode, GLsizei instance_count) {
+            glBindVertexArray(va.name);
+            glDrawElementsInstanced(
+                to_underlying(mode),
+                count,
+                type,
+                reinterpret_cast<const void *>(offset),
+                instance_count
+            );
+        }
     };
 
-    /* "vertices" must contain normalized "vec" elements */
-    template<int L, size_t VertexCount, typename ElementType, size_t ElementCount>
-    requires is_element_type<ElementType>
+    template<is_element_type ElementType, size_t ElementCount>
     mesh make_mesh(
-        span<vec<L, float>, VertexCount> vertices,
+        span<vec3> vertices,
         span<ElementType, ElementCount> elements
     ) {
         buffer vb = store(vertices); int vb_bind_index = 0;
         buffer eb = store(elements);
         vertex_array va; int va_attr_index = 0;
-        va.bind_vertex_buffer<vec<L, float>>(vb_bind_index, vb);
+        va.bind_vertex_buffer<vec3>(vb_bind_index, vb);
         va.bind_element_buffer(eb);
 
         va.enable_attribute(va_attr_index);
-        va.format_attribute(va_attr_index, L, GL_FLOAT, GL_FALSE, 0);
+        va.format_attribute(va_attr_index, 3, GL_FLOAT, GL_FALSE, 0);
         va.bind_attribute(va_attr_index, vb_bind_index);
 
         size_t count = elements.size();
         GLenum type = element_type<ElementType>::value;
         size_t offset = 0;
 
-        return { std::move(va), std::move(vb), std::move(eb), count, type, offset };
+        return { std::move(va), std::move(vb), std::move(eb), static_cast<GLsizei>(count), type, offset };
     }
+
+    template<is_element_type ElementType, size_t ElementCount>
+    mesh_with_normals make_mesh_with_normals(
+        span<vec3> positions,
+        span<vec3> normals,
+        span<ElementType, ElementCount> elements
+    ) {
+        buffer pb = store(positions);
+        buffer nb = store(normals);
+        buffer eb = store(elements);
+        vertex_array va;
+
+        va.enable_attribute(0);
+        va.enable_attribute(1);
+        va.format_attribute(0, 3, GL_FLOAT, GL_FALSE, 0);
+        va.format_attribute(1, 3, GL_FLOAT, GL_TRUE,  0);
+
+        va.bind_attribute(0, 0);
+        va.bind_vertex_buffer<vec3>(0, pb);
+        va.bind_attribute(1, 1);
+        va.bind_vertex_buffer<vec3>(1, nb);
+        va.bind_element_buffer(eb);
+
+        size_t count = elements.size();
+        GLenum type = element_type<ElementType>::value;
+        size_t offset = 0;
+
+        return {
+            std::move(va),
+            std::move(pb),
+            std::move(nb),
+            std::move(eb),
+            static_cast<GLsizei>(count),
+            type,
+            offset
+        };
+    }
+
     /* --- */
 
     /* === */
@@ -328,7 +478,11 @@ export namespace gl
         glBindBufferBase(GL_UNIFORM_BUFFER, index, buffer.name);
     }
 
+    void bind_shader_storage_buffer(GLuint index, buffer & buffer) {
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, index, buffer.name);
+    }
+
     void clear_color(vec4 color) {
         glClearColor(color.x, color.y, color.z, color.w);
     }
-}
+};

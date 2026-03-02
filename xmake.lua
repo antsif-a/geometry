@@ -2,6 +2,7 @@ local imgui = 'imgui-1.92.6-docking/'
 local imgui_modules = 'imgui-module-1.92.6-docking/'
 local glm = 'glm-1.0.3/'
 local glfw = 'glfw-3.4/'
+local entt = 'entt-3.16.0/'
 local wayland = glfw..'deps/wayland/'
 
 local use_x11 = false
@@ -47,6 +48,13 @@ target('glm')
         glm..'glm/glm.cppm',
         {public = true})
 
+target('entt')
+    set_kind('headeronly')
+    set_languages('c++20')
+    add_includedirs(
+        entt..'src',
+        {public = true})
+
 target('glfw')
     set_kind('static')
     set_languages('c99')
@@ -61,7 +69,7 @@ target('glfw')
         glfw..'deps/wayland/xdg-activation-v1.xml',
         glfw..'deps/wayland/xdg-decoration-unstable-v1.xml',
         {rule='wayland-protocols'})
-    add_includedirs(wayland, 'src')
+    add_includedirs(wayland)
     add_includedirs(
         glfw..'include',
         {public = true})
@@ -90,7 +98,6 @@ target('glfw')
             glfw..'src/linux_joystick.c',
             glfw..'src/xkb_unicode.c')
 
-        add_syslinks('OpenGL')
         if use_x11 then
             add_defines('_GLFW_X11')
             add_files(
@@ -98,20 +105,24 @@ target('glfw')
                 glfw..'src/x11_monitor.c',
                 glfw..'src/x11_window.c',
                 glfw..'src/glx_context.c')
+        else
+            add_defines('_GLFW_WAYLAND')
+            add_files(
+                glfw..'src/wl_init.c',
+                glfw..'src/wl_monitor.c',
+                glfw..'src/wl_window.c')
         end
-        add_defines('_GLFW_WAYLAND')
-        add_files(
-            glfw..'src/wl_init.c',
-            glfw..'src/wl_monitor.c',
-            glfw..'src/wl_window.c')
     end
 
 target('imgui')
     set_kind('static')
     set_languages('c++20')
-    if not use_x11 then
+    if use_x11 then
+        add_defines('IMGUI_IMPL_GLFW_DISABLE_WAYLAND')
+    else
         add_defines('IMGUI_IMPL_GLFW_DISABLE_X11')
     end
+
     add_deps('glfw')
     add_includedirs(
         imgui,
@@ -129,9 +140,11 @@ target('imgui')
 
 target('geometry++')
     set_kind('binary')
-    set_languages('c++23')
+    set_languages('c++26')
     --add_cxflags(
     --    '-fvisibility=hidden', '-fvisibility-inlines-hidden')
     --add_ldflags('-s')
-    add_deps('glfw', 'imgui', 'glm')
-    add_files('src/*.cc')
+    add_syslinks('OpenGL')
+    add_deps('glfw', 'imgui', 'glm', 'entt')
+    add_files('source/*.cc')
+
