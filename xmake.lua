@@ -1,11 +1,11 @@
-local imgui = 'third_party/imgui-1.92.6-docking/'
+local imgui = 'third_party/imgui/'
 local imgui_modules = 'third_party/imgui-module-1.92.6-docking/'
-local glm = 'third_party/glm-1.0.3/'
-local glfw = 'third_party/glfw-3.4/'
+local glm = 'third_party/glm/'
+local glfw = 'third_party/glfw/'
 local wayland = glfw..'deps/wayland/'
-local entt = 'third_party/entt-3.16.0/'
-local fastgltf = 'third_party/fastgltf-0.9.0/'
-local simdjson = 'third_party/simdjson-4.3.1/'
+local entt = 'third_party/entt/'
+local fastgltf = 'third_party/fastgltf/'
+local simdjson = 'third_party/simdjson/'
 
 local use_x11 = false
 
@@ -43,7 +43,7 @@ target('glm')
         'GLM_EXT_INLINE_NAMESPACE',
         'GLM_GTX_INLINE_NAMESPACE')
     add_includedirs(
-        glm..'glm')
+        glm)
     add_files(
         glm..'glm/glm.cppm',
         {public = true})
@@ -143,8 +143,8 @@ target('imgui')
 target('simdjson')
     set_kind('static')
     set_languages('c++17')
-    add_includedirs(simdjson)
-    add_files(simdjson..'simdjson.cpp')
+    add_includedirs(simdjson..'singleheader')
+    add_files(simdjson..'singleheader/simdjson.cpp')
 
 target('fastgltf')
     set_kind('static')
