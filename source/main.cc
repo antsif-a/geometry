@@ -1,107 +1,81 @@
-#include <cstdlib>
 #include <entt/entity/registry.hpp>
+#define GL_GLEXT_PROTOTYPES
+#include <GL/glcorearb.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 import std;
 import std.compat;
 
-import gl.core;
 import gl;
 import glfw;
-import glfw.core;
 import glm;
 
 import imgui;
 import imgui_impl_glfw;
 import imgui_impl_opengl3;
 
+import logger;
 import camera;
 import geometry;
 
 using std::array;
 using std::span;
-using std::srand, std::rand, std::time;
 using std::string;
 using std::vector;
+using std::filesystem::path;
 using namespace glm;
 
-float random(float from, float to) {
-    return (float(rand()) / RAND_MAX) * (to - from) + from;
-}
+extern const uint8_t _binary_shader_vert_glsl_spv_start[];
+extern const uint8_t _binary_shader_vert_glsl_spv_end[];
 
-const string vs_src = R"glsl(#version 460 core
-/* --- */
-layout (location = 0) in vec3 position;
-layout (location = 1) in vec3 normal;
+extern const uint8_t _binary_shader_frag_glsl_spv_start[];
+extern const uint8_t _binary_shader_frag_glsl_spv_end[];
+/*
+ * packed:
+ * - implementation defined
+ * shared (default):
+ * + can be used across programs
+ * + can be used by ssbo / ubo
+ * - all variables are active, nothing is optimized
+ * std140:
+ * ! array stride is 16 bytes (vec4)
+ * + can be used across programs
+ * - not tightly packed - introduces unnecessary padding
+ * std430:
+ * + more tightly packed than std140 (except for vec3)
+ * - can't be used by ubo
+ */
 
-layout (std140, binding = 0) uniform Globals {
-    mat4 view;
-    mat4 projection;
+/* === shader mappings === */
+enum {
+    binding_uniform_buffer,
+    binding_instance_data_array,
+    binding_light_position_array,
+    binding_textures
 };
 
-struct instance_data {
+/* binding_instance_data : std430 ssbo, array of */
+struct alignas(vec4) instance_data {
     mat4 normal_matrix;
     mat4 model;
     vec4 color;
+    int texture_index;
+    uint32_t _[3];
 };
 
-layout (std430, binding = 1) buffer InstanceData {
-    instance_data instances[];
+/* binding_view_projection : std140 ubo */
+struct alignas(vec4) uniform_buffer {
+    mat4 projection_matrix;
+    mat4 view_matrix;
+    vec3 camera_position;
+    int   enable_light;
+    float ambient;
+    float diffuse;
+    float specular;
+    int   specular_power;
 };
-
-out vec3 fragment_position;
-out vec3 fragment_normal;
-out flat vec4 fragment_color;
-
-void main() {
-    instance_data data = instances[gl_InstanceID];
-    vec4 world_position = data.model * vec4(position, 1.0);
-    fragment_position = world_position.xyz;
-    fragment_normal = mat3(data.normal_matrix) * normal;
-    fragment_color = data.color;
-    gl_Position = projection * view * world_position;
-}
-/* --- */
-)glsl";
-
-const string fs_src = R"glsl(#version 460 core
-/* --- */
-out vec4 color;
-in vec3 fragment_position;
-in vec3 fragment_normal;
-in flat vec4 fragment_color;
-
-uniform vec3 light_position;
-uniform vec3 camera_position;
-uniform bool calculate_normals;
-uniform bool calculate_light;
-uniform float specular;
-uniform int specular_pow;
-uniform float ambient;
-uniform float diffuse;
-
-void main() {
-    vec3 normal;
-    if (calculate_normals) {
-        normal = normalize(cross(dFdx(fragment_position), dFdy(fragment_position)));
-    } else {
-        normal = normalize(fragment_normal);
-    }
-
-    if (calculate_light) {
-        vec3 light_dir = normalize(light_position - fragment_position);
-        vec3 view_dir = normalize(camera_position - fragment_position);
-        float diff = max(dot(normal, light_dir), 0.0f) * diffuse;
-
-        vec3 reflect_dir = reflect(-light_dir, normal);
-        float spec = pow(max(dot(view_dir, reflect_dir), 0.0f), specular_pow) * specular;
-
-        color = vec4((ambient + diff + spec) * fragment_color.rgb, fragment_color.a);
-    } else {
-        color = fragment_color;
-    }
-}
-/* --- */
-)glsl";
+/* === */
 
 struct imgui {
     imgui(GLFWwindow * window) {
@@ -120,10 +94,23 @@ struct imgui {
         ImGui::DestroyContext();
     }
 
-    void new_frame() {
+    void new_frame(
+        float fps,
+        float *screen_color,
+        float *ambient,
+        float *diffuse,
+        float *specular,
+        int   *specular_power
+    ) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        ImGui::ColorEdit4("Screen color", screen_color);
+        ImGui::SliderFloat("Ambient", ambient, 0.f, 1.f);
+        ImGui::SliderFloat("Diffuse", diffuse, 0.f, 1.f);
+        ImGui::SliderFloat("Specular", specular, 0.f, 1.f);
+        ImGui::SliderInt("Specular Power", specular_power, 1, 128);
+        ImGui::Text("fps = %f", fps);
     }
 
     void render() {
@@ -132,28 +119,26 @@ struct imgui {
     }
 };
 
-mat4 *view_matrix, *projection_matrix;
+const int WIDTH = 1400, HEIGHT = 1000;
+uniform_buffer *ub; // somewhere in the gpu
 lerp_camera camera;
-vec4 screen_color = vec4(0);
-vec3 scale_v = vec3(0.5f);
+vec4 screen_color = vec4(1);
+bool camera_enabled = true;
+dvec2 mouse_position = vec2(0, 0);
+double camera_sensitivity = 0.1f;
 
-const int WIDTH = 800, HEIGHT = 600;
 void framebuffer_size_callback(glfw::window_view, int w, int h) {
     glViewport(0, 0, w, h);
-    *projection_matrix = glm::perspective(glm::radians(45.0f), (float) w / (float) h, 0.1f, 100.f);
+    ub->projection_matrix = glm::perspective(glm::radians(45.0f), (float) w / (float) h, 0.1f, 100.f);
 }
-
-bool camera_enabled = true;
-vec2 mouse_position = vec2(0, 0);
-float camera_sensitivity = 0.1f;
 
 void cursor_callback(glfw::window_view, double xpos, double ypos) {
     if (camera_enabled) {
-        float dx = mouse_position.x - xpos;
-        float dy = mouse_position.y - ypos;
-        camera.rotate(dx * camera_sensitivity, dy * camera_sensitivity);
-        mouse_position.x = (float) xpos;
-        mouse_position.y = (float) ypos;
+        double dx = mouse_position.x - xpos;
+        double dy = mouse_position.y - ypos;
+        camera.rotate(float(dx) * camera_sensitivity, float(dy) * camera_sensitivity);
+        mouse_position.x = xpos;
+        mouse_position.y = ypos;
     }
 }
 
@@ -211,40 +196,31 @@ struct normal_mat { mat4 value; };
 struct model { mat4 value; };
 struct color { vec4 value; };
 
-struct instance_data {
-    mat4 normal_matrix;
-    mat4 model;
-    vec4 color;
-};
-
-auto light_position = vec3(-1.2f, 1.1f, 1.3f) * 2;
-void create_entities(entt::registry & registry) {
-    srand(time(0));
+void create_entities(entt::registry &registry) {
     /* --- entity creation --- */
-    for (float x = -10; x < 10; ++x) {
-        for (float y = -10; y < 10; ++y) {
-            for (float z = -10; z < 10; ++z) {
-                auto entity = registry.create();
-                registry.emplace<object_type::main>(entity);
-                registry.emplace<color>(entity, vec4(1, 0, 0, 1));
-                registry.emplace<model>(entity, mat4(1.f));
-                registry.patch<model>(entity, [&] (auto &m) { m.value = translate(m.value, vec3(x, y, z)); });
-                registry.patch<model>(entity, [&] (auto &m) { m.value = scale(m.value, vec3(0.5f)); });
-            }
-        }
+    for (int i = 0; i < 1; ++i) {
+        auto entity = registry.create();
+        registry.emplace<object_type::main>(entity);
+        registry.emplace<color>(entity, vec4(1, 0, 0, 1));
+        registry.emplace<model>(entity, mat4(1.f));
+        registry.patch<model>(entity, [] (auto &m) { m.value = translate(m.value, vec3(-1)); });
+        registry.patch<model>(entity, [] (auto &m) { m.value = scale(m.value, vec3(1.5f)); });
     }
-    auto light = registry.create();
-    registry.emplace<object_type::light>(light);
-    registry.emplace<color>(light, vec4(1.f));
-    registry.emplace<model>(light, mat4(1.f));
-    registry.patch<model>(light, [] (auto &m) { m.value = translate(m.value, light_position); });
-    registry.patch<model>(light, [] (auto &m) { m.value = scale(m.value, vec3(0.2f)); });
+    vector<vec3> light_positions = {vec3(2)};
+    for (auto & position : light_positions) {
+        auto light = registry.create();
+        registry.emplace<object_type::light>(light);
+        registry.emplace<color>(light, vec4(1.f));
+        registry.emplace<model>(light, mat4(1.f));
+        registry.patch<model>(light, [&] (auto &m) { m.value = translate(m.value, position); });
+        registry.patch<model>(light, [] (auto &m) { m.value = scale(m.value, vec3(0.2f)); });
+    }
 
     auto room = registry.create();
     registry.emplace<object_type::room>(room);
-    registry.emplace<color>(room, vec4(vec3(0.3), 1));
+    registry.emplace<color>(room, vec4(vec3(0.1), 1));
     registry.emplace<model>(room, mat4(1.f));
-    registry.patch<model>(room, [] (auto &m) { m.value = scale(m.value, vec3(3)); });
+    registry.patch<model>(room, [] (auto &m) { m.value = scale(m.value, vec3(5)); });
 
     /* --- normal matrix generation --- */
     for (auto view = registry.view<model>(); auto entity: view)
@@ -252,16 +228,44 @@ void create_entities(entt::registry & registry) {
 }
 
 template<typename T>
-vector<instance_data> make_instances_of(entt::registry & registry) {
+vector<instance_data> make_instances_of(entt::registry &registry) {
     vector<instance_data> instances = {};
     for (auto view = registry.view<normal_mat, model, color, T>(); auto entity: view) {
         auto [n, m, c] = view.get(entity);
-        instances.push_back(instance_data(n.value, m.value, c.value));
+        instances.push_back(instance_data(n.value, m.value, c.value, -1));
     }
     return instances;
 }
-/* --- */
 
+vector<vec4> get_light_positions(entt::registry &registry) {
+    vector<vec4> positions = {};
+    for (auto view = registry.view<model, object_type::light>(); auto entity: view) {
+        auto [m] = view.get(entity);
+        vec3 position = m.value[3];
+        positions.push_back(vec4(position.x, position.y, position.z, 0.0f));
+    }
+    return positions;
+}
+
+template<size_t N>
+vector<gl::texture> load_textures(array<path, N> paths) {
+    vector<gl::texture> textures;
+    textures.reserve(N);
+    uint8_t * pixels;
+    int x, y, channels;
+    stbi_set_flip_vertically_on_load(false);
+    for (size_t i = 0; i < N; ++i) {
+        logger::info("path = {}", paths[i].c_str());
+        pixels = stbi_load(paths[i].c_str(), &x, &y, &channels, STBI_default);
+        if (pixels == nullptr)
+            logger::error("texture data = nullptr");
+        textures.push_back(gl::make_texture(pixels, x, y, channels));
+        stbi_image_free(pixels);
+    }
+    return textures;
+}
+
+/* --- */
 int main()
 {
     glfw::set_default_error_handler();
@@ -272,6 +276,7 @@ int main()
         {glfw::WindowHint::ContextVersionMinor, 6},
         {glfw::WindowHint::OpenglProfile, glfw::OpenglCoreProfile},
         {glfw::WindowHint::OpenglForwardCompat, true},
+        {glfw::WindowHint::ContextDebug, true}
     });
 
     glfw::set_current_context(window);
@@ -286,76 +291,92 @@ int main()
 
     imgui gui(window.handle);
 
-    glEnable(GL_DEBUG_OUTPUT);
-    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE);
+    gl::load(glfw::get_proc_address);
+    gl::set_default_debug_message_handler();
+    gl::enable(GL_DEBUG_OUTPUT);
+    gl::enable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    gl::enable(GL_DEPTH_TEST);
+    gl::enable(GL_CULL_FACE);
+
+    int m;
+    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &m);
+    logger::info("GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS = {}", m);
 
     /* --- shaders --- */
-    gl::set_default_debug_message_handler();
     gl::shader vs(GL_VERTEX_SHADER), fs(GL_FRAGMENT_SHADER);
-    vs.source(vs_src); vs.compile();
-    fs.source(fs_src); fs.compile();
-    gl::program p;
-    p.attach_shader(vs);
-    p.attach_shader(fs);
-    p.link();
-    /* --- */
-
-    /* --- uniform buffers --- */
-    gl::buffer mat = gl::calloc<mat4, 2>();
-    view_matrix = mat.data<mat4>();
-    projection_matrix = view_matrix + 1;
-    *view_matrix = lookAt(vec3(0, 0, 5), vec3(0), vec3(0, 1, 0));
-    *projection_matrix = glm::perspective(glm::radians(45.0f), (float) WIDTH / (float) HEIGHT, 0.1f, 100.f);
-    mat4 model_matrix = mat4(1.f);
-    mat3 normal_matrix = mat3(1.f);
-    gl::bind_uniform_buffer(0, mat);
-    /* --- */
-
-    /* --- uniforms --- */
-    GLfloat ambient = 0.1f;
-    GLfloat diffuse = 0.5f;
-    GLfloat specular = 0.4f;
-    GLint specular_pow = 32;
-    /* --- */
-
-    /* --- mesh generation --- */
-    gl::mesh light_m;
-    {
-        const vec2 grid = {32, 32};
-        auto vertices = generate_surface(grid.x, grid.y, sphere);
-        auto elements = generate_grid_indices(grid.x, grid.y);
-        auto mesh = gl::make_mesh(span(vertices), span(elements));
-        light_m = std::move(mesh);
-    }
-
-    gl::mesh_with_normals main_m;
-    {
-        const vec2 grid = {32, 32};
-        auto surface = generate_surface(grid.x, grid.y, sphere);
-        auto normals = generate_normals(grid.x, grid.y, sphere);
-        auto elements = generate_grid_indices(grid.x, grid.y);
-        auto mesh = gl::make_mesh_with_normals(span(surface), span(normals), span(elements));
-        main_m = std::move(mesh);
-    }
-
-    gl::mesh_with_normals walls_m;
-    {
-        auto cube = create_cube_cw();
-        auto mesh = gl::make_mesh_with_normals(span(cube.positions), span(cube.normals), span(cube.indices));
-        walls_m = std::move(mesh);
-    }
+    vs.binary(GL_SHADER_BINARY_FORMAT_SPIR_V, span(_binary_shader_vert_glsl_spv_start, _binary_shader_vert_glsl_spv_end));
+    vs.specialize();
+    fs.binary(GL_SHADER_BINARY_FORMAT_SPIR_V, span(_binary_shader_frag_glsl_spv_start, _binary_shader_frag_glsl_spv_end));
+    fs.specialize();
+    gl::program program;
+    program.attach_shader(vs);
+    program.attach_shader(fs);
+    program.link();
     /* --- */
 
     entt::registry registry;
     create_entities(registry);
     vector<instance_data> main_instances = make_instances_of<object_type::main>(registry);
     vector<instance_data> light_instances = make_instances_of<object_type::light>(registry);
+    vector<vec4> light_positions = get_light_positions(registry);
     vector<instance_data> room_instances = make_instances_of<object_type::room>(registry);
-    gl::buffer mains_buf = gl::store(span(main_instances));
-    gl::buffer lights_buf = gl::store(span(light_instances));
-    gl::buffer rooms_buf = gl::store(span(room_instances));
+
+    /* --- textures --- */
+    array<path, 2> texture_filenames = {"8k_stars.jpg", "8k_earth_daymap.jpg"};
+    for (path &f : texture_filenames)
+        f = "/home/andrew/Source/geometry++/assets" / f;
+    vector<gl::texture> textures = load_textures(texture_filenames);
+#if 0
+    gl::make_texture_handle_resident(textures[0].get_handle());
+    gl::make_texture_handle_resident(textures[1].get_handle());
+#endif
+    for (auto &data : room_instances)
+        data.texture_index = 0;
+    for (auto &data : main_instances)
+        data.texture_index = 1;
+
+    gl::bind_texture_units(binding_textures, span(textures));
+    /* --- */
+
+    gl::buffer main_instances_buffer  = gl::store(span(main_instances));
+    gl::buffer light_instances_buffer = gl::store(span(light_instances));
+    gl::buffer room_instances_buffer  = gl::store(span(room_instances));
+
+    gl::buffer light_positions_buffer = gl::store(span(light_positions));
+    gl::bind_shader_storage_buffer(binding_light_position_array, light_positions_buffer);
+
+    /* --- uniform buffer --- */
+    gl::buffer ubo_buffer = gl::malloc(sizeof(uniform_buffer));
+    ub = ubo_buffer.data<uniform_buffer>();
+    ub->view_matrix = glm::lookAt(vec3(0, 0, 5), vec3(0), vec3(0, 1, 0));
+    ub->projection_matrix = glm::perspective(radians(45.0f), (float) WIDTH / (float) HEIGHT, 0.1f, 100.f);
+    ub->ambient = .1f;
+    ub->diffuse = 1.f;
+    ub->specular = .5f;
+    ub->specular_power = 8;
+    ub->enable_light = false;
+    gl::bind_uniform_buffer(binding_uniform_buffer, ubo_buffer);
+    /* --- */
+
+    /* --- mesh generation --- */
+    gl::mesh light_m = gl::make_mesh(
+        generate_grid_indices(32, 32),
+        {
+            generate_surface(32, 32, sphere),
+        }
+    );
+
+    int w = 64, h = 64;
+    gl::mesh main_m = gl::make_mesh(
+        generate_grid_indices(w, h),
+        generate_surface(w, h, sphere),
+        generate_normals(w, h, sphere),
+        generate_texcoords(w, h)
+    );
+
+    auto cube = create_cube_cw();
+    gl::mesh walls_m = gl::make_mesh(cube.indices, cube.positions, cube.normals, cube.texcoords);
+    /* --- */
 
     double dt = 0;
     double last_frame_time = 0;
@@ -367,52 +388,34 @@ int main()
         last_frame_time = now;
         if (camera_enabled) {
             camera.update(dt);
-            *view_matrix = camera.compute_view_matrix();
+            ub->view_matrix = camera.compute_view_matrix();
+            ub->camera_position = camera.position;
         }
 
-        gui.new_frame();
-        ImGui::ColorEdit4("Screen color", glm::value_ptr(screen_color));
-        // ImGui::ColorEdit4("Cube color", glm::value_ptr(color));
-        // ImGui::SliderFloat("Scale (x)", glm::value_ptr(scale_v), 0.f, 5.f);
-        // ImGui::SliderFloat("Scale (y)", glm::value_ptr(scale_v) + 1, 0.f, 5.f);
-        // ImGui::SliderFloat("Scale (z)", glm::value_ptr(scale_v) + 2, 0.f, 5.f);
-        ImGui::SliderFloat("Ambient", &ambient, 0.f, 1.f);
-        ImGui::SliderFloat("Diffuse", &diffuse, 0.f, 1.f);
-        ImGui::SliderFloat("Specular", &specular, 0.f, 1.f);
-        ImGui::SliderInt("Specular Power", &specular_pow, 1, 128);
-        ImGui::Text("fps = %f", 1 / dt);
-
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        gl::clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         gl::clear_color(screen_color);
 
-        p.use();
-        p.uniform("light_position", camera.position);
-        p.uniform("camera_position", camera.position);
-        p.uniform("ambient", ambient);
-        p.uniform("diffuse", diffuse);
-        p.uniform("specular", specular);
-        p.uniform("specular_pow", specular_pow);
-
-        p.uniform("calculate_light", true);
-        p.uniform("calculate_normals", false);
-        gl::bind_shader_storage_buffer(1, mains_buf);
+        program.use();
+        ub->enable_light = true;
+        gl::bind_shader_storage_buffer(binding_instance_data_array, main_instances_buffer);
         main_m.draw(gl::DrawMode::Triangles, main_instances.size());
 
-        p.uniform("calculate_light", false);
-        p.uniform("calculate_normals", true);
-        gl::bind_shader_storage_buffer(1, lights_buf);
-        light_m.draw(gl::DrawMode::Triangles);
-
-        p.uniform("calculate_light", true);
-        p.uniform("calculate_normals", false);
-        gl::bind_shader_storage_buffer(1, rooms_buf);
+        gl::bind_shader_storage_buffer(binding_instance_data_array, room_instances_buffer);
         walls_m.draw(gl::DrawMode::Triangles);
 
+        gl::bind_shader_storage_buffer(binding_instance_data_array, light_instances_buffer);
+        light_m.draw(gl::DrawMode::Triangles, light_instances.size());
 
+        gui.new_frame(1 / dt, glm::value_ptr(screen_color), &ub->ambient, &ub->diffuse, &ub->specular, &ub->specular_power);
         gui.render();
 
         window.swap_buffers();
     }
+
+#if 0
+    for (auto &t : textures)
+        gl::make_texture_handle_non_resident(t.get_handle());
+#endif
 
     return 0;
 }

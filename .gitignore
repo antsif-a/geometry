@@ -1,9 +1,4 @@
 build/
+third_party/
 .xmake/
-glfw-3.4
-glm-1.0.3
-imgui-1.92.6-docking
-imgui-module-1.92.6-docking
-entt-3.16.0
-sol-3.3.0
 imgui.ini

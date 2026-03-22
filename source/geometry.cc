@@ -10,34 +10,35 @@ using std::numeric_limits;
 using namespace glm;
 
 export struct cube {
-    array<vec3, 24> positions;
-    array<vec3, 24> normals;
-    array<unsigned char, 36> indices;
+    vector<unsigned char> indices;
+    vector<vec3> positions;
+    vector<vec3> normals;
+    vector<vec2> texcoords;
 };
 
-cube create_cube(array<unsigned int, 6> index_order, int normal_sign) {
+cube create_cube(array<unsigned int, 6> index_order, float normal_sign) {
     cube c = {};
+    c.positions.reserve(24);
+    c.normals.reserve(24);
+    c.indices.reserve(36);
     const mat3 id = mat3(1.0);
-    int face_count = 0;
     for (int i = 0; i < 3; ++i) {
         for (float sign : {-1, 1}) {
             vec3 n = sign * id[i];
             vec3 u = vec3(n.y, n.z, n.x);
             vec3 v = cross(n, u);
-
-            int v_idx = face_count * 4;
-            int i_idx = face_count * 6;
-
-            c.positions[v_idx + 0] = n - u - v;
-            c.positions[v_idx + 1] = n + u - v;
-            c.positions[v_idx + 2] = n + u + v;
-            c.positions[v_idx + 3] = n - u + v;
-
-            for (int k = 0; k < 4; ++k)
-                c.normals[v_idx + k] = static_cast<float>(normal_sign) * n;
             for (int k = 0; k < 6; ++k)
-                c.indices[i_idx + k] = v_idx + index_order[k];
-            face_count++;
+                c.indices.push_back(c.positions.size() + index_order[k]);
+            c.positions.push_back(n - u - v);
+            c.positions.push_back(n + u - v);
+            c.positions.push_back(n + u + v);
+            c.positions.push_back(n - u + v);
+            for (int k = 0; k < 4; ++k)
+                c.normals.push_back(normal_sign * n);
+            c.texcoords.push_back(vec2(0.0f, 0.0f));
+            c.texcoords.push_back(vec2(1.0f, 0.0f));
+            c.texcoords.push_back(vec2(1.0f, 1.0f));
+            c.texcoords.push_back(vec2(0.0f, 1.0f));
         }
     }
 
@@ -45,22 +46,16 @@ cube create_cube(array<unsigned int, 6> index_order, int normal_sign) {
 }
 
 export cube create_cube_ccw() {
-    return create_cube({0, 1, 2, 0, 2, 3}, 1);
+    return create_cube({0, 1, 2, 0, 2, 3}, 1.f);
 }
 
 export cube create_cube_cw() {
-    return create_cube({0, 3, 2, 0, 2, 1}, -1);
+    return create_cube({0, 3, 2, 0, 2, 1}, -1.f);
 }
 
 template<typename F>
 concept can_make_surface = requires(F f, float u, float v) {
     { f(u, v) } -> convertible_to<vec3>;
-};
-
-export struct surface {
-    vector<vec3> positions;
-    vector<vec3> normals;
-    vector<unsigned int> indices;
 };
 
 export vector<vec3> generate_surface(int W, int H, can_make_surface auto f) {
@@ -81,16 +76,20 @@ export vector<vec3> generate_normals(int W, int H, can_make_surface auto f) {
         float u = float(i) / (W - 1);
         for (int j = 0; j < H; ++j) {
             float v = float(j) / (H - 1);
-            vec3 f0 = f(u, v);
             float eps = 1e-4f;
+            float u_next = u + eps;
+            float u_prev = u - eps;
+            float v_next = min(v + eps, 1.0f);
+            float v_prev = max(v - eps, 0.0f);
 
-            vec3 dFdu = (f(mod(u + eps, 1.f), v) - f0) / eps;
-            vec3 dFdv = (f(u, mod(v + eps, 1.f)) - f0) / eps;
+            vec3 dFdu = (f(mod(u_next, 1.f), v) - f(mod(u_prev, 1.f), v)) / 2.0f * eps;
+            vec3 dFdv = (f(u, v_next) - f(u, v_prev)) / v_next - v_prev;
             vec3 n = cross(dFdu, dFdv);
-            if (length(n) < 1e-6f)
-                n = normalize(f0);
-            else
+            if (length(n) < 1e-6f) {
+                n = normalize(f(u, v));
+            } else {
                 n = normalize(n);
+            }
 
             normals.push_back(n);
         }
@@ -117,6 +116,19 @@ export vector<unsigned int> generate_grid_indices(int W, int H) {
         }
     }
     return indices;
+}
+
+export vector<vec2> generate_texcoords(int W, int H) {
+    vector<vec2> texcoords;
+    texcoords.reserve(W * H);
+    for (int i = 0; i < W; ++i) {
+        float u = float(W - i - 1) / (W - 1);
+        for (int j = 0; j < H; ++j) {
+            float v = float(j) / (H - 1);
+            texcoords.push_back(vec2(u, v));
+        }
+    }
+    return texcoords;
 }
 
 export auto sphere = [] (float u, float v) {
