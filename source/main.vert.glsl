@@ -5,7 +5,7 @@ struct instance_data {
     mat4 model;
     vec4 color;
     int  texture_index;
-    int  _[3];
+    int  _[27];
 };
 
 layout (std140, binding = 0) uniform _0 {

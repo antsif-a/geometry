@@ -25,6 +25,7 @@ using std::string;
 using std::string_view;
 using std::map;
 using std::unordered_map;
+using std::flat_map;
 
 using namespace glm;
 
@@ -374,26 +375,28 @@ export namespace gl
             glShaderSource(name, 1, &data, &size);
         }
 
+        void compile() {
+            glCompileShader(name);
+        }
+
         void binary(GLenum binary_format, span<const uint8_t> binary) {
             // TODO bulk shader initialization?
             glShaderBinary(1, &name, binary_format, binary.data(), binary.size());
         }
 
-        void compile() {
-            glCompileShader(name);
-        }
-
-        void specialize(string_view entry_point = "main", map<GLuint, GLuint> constants = {}) {
-            // TODO specialization constants
-            glSpecializeShader(name, entry_point.data(), 0, nullptr, nullptr);
+        void specialize(string_view entry_point = "main", flat_map<uint32_t, uint32_t> constants_map = {}) {
+            if (size_t n = constants_map.size() > 0) {
+                auto constants = std::move(constants_map).extract();
+                glSpecializeShader(name, entry_point.data(), n, constants.keys.data(), constants.values.data());
+            } else {
+                glSpecializeShader(name, entry_point.data(), 0, nullptr, nullptr);
+            }
         }
     };
     /* --- */
 
     /* --- program --- */
     struct program: program_t {
-        DEBUG_CAPABILITIES(program);
-
         void attach_shader(shader &shader) {
            glAttachShader(name, shader.name);
         }
@@ -578,6 +581,10 @@ export namespace gl
 
     void bind_shader_storage_buffer(GLuint index, buffer &b) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, index, b.name);
+    }
+
+    void bind_shader_storage_buffer(GLuint index, buffer &b, GLintptr offset, GLsizeiptr size) {
+        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, index, b.name, offset, size);
     }
 
     void bind_texture_units(GLuint index, span<texture> textures) {

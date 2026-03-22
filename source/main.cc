@@ -26,11 +26,10 @@ using std::vector;
 using std::filesystem::path;
 using namespace glm;
 
-extern const uint8_t _binary_shader_vert_glsl_spv_start[];
-extern const uint8_t _binary_shader_vert_glsl_spv_end[];
-
-extern const uint8_t _binary_shader_frag_glsl_spv_start[];
-extern const uint8_t _binary_shader_frag_glsl_spv_end[];
+extern const uint8_t _binary_main_vert_glsl_spv_start[];
+extern const uint8_t _binary_main_vert_glsl_spv_end[];
+extern const uint8_t _binary_main_frag_glsl_spv_start[];
+extern const uint8_t _binary_main_frag_glsl_spv_end[];
 /*
  * packed:
  * - implementation defined
@@ -50,18 +49,22 @@ extern const uint8_t _binary_shader_frag_glsl_spv_end[];
 /* === shader mappings === */
 enum {
     binding_uniform_buffer,
-    binding_instance_data_array,
-    binding_light_position_array,
+    binding_instances_data,
+    binding_light_positions,
     binding_textures
+};
+
+enum {
+    constant_texture_count
 };
 
 /* binding_instance_data : std430 ssbo, array of */
 struct alignas(vec4) instance_data {
     mat4 normal_matrix;
-    mat4 model;
+    mat4 model_matrix;
     vec4 color;
-    int texture_index;
-    uint32_t _[3];
+    int  texture_index;
+    uint32_t _[27];
 };
 
 /* binding_view_projection : std140 ubo */
@@ -78,6 +81,7 @@ struct alignas(vec4) uniform_buffer {
 /* === */
 
 struct imgui {
+    bool vsync = 1;
     imgui(GLFWwindow * window) {
         ImGui::CheckVersion();
         ImGui::CreateContext();
@@ -110,6 +114,9 @@ struct imgui {
         ImGui::SliderFloat("Diffuse", diffuse, 0.f, 1.f);
         ImGui::SliderFloat("Specular", specular, 0.f, 1.f);
         ImGui::SliderInt("Specular Power", specular_power, 1, 128);
+        if (ImGui::Checkbox("Vsync", &vsync)) {
+            glfw::swap_interval(vsync ? 1 : 0);
+        }
         ImGui::Text("fps = %f", fps);
     }
 
@@ -186,86 +193,120 @@ void key_callback(glfw::window_view window, glfw::Key key, int, glfw::Action act
     }
 }
 
-/* --- components --- */
-namespace object_type {
-    struct main {};
-    struct light {};
-    struct room {};
+enum {
+    texture_index_stars,
+    texture_index_earth_daymap
 };
-struct normal_mat { mat4 value; };
-struct model { mat4 value; };
-struct color { vec4 value; };
 
-void create_entities(entt::registry &registry) {
-    /* --- entity creation --- */
-    for (int i = 0; i < 1; ++i) {
-        auto entity = registry.create();
-        registry.emplace<object_type::main>(entity);
-        registry.emplace<color>(entity, vec4(1, 0, 0, 1));
-        registry.emplace<model>(entity, mat4(1.f));
-        registry.patch<model>(entity, [] (auto &m) { m.value = translate(m.value, vec3(-1)); });
-        registry.patch<model>(entity, [] (auto &m) { m.value = scale(m.value, vec3(1.5f)); });
-    }
-    vector<vec3> light_positions = {vec3(2)};
-    for (auto & position : light_positions) {
-        auto light = registry.create();
-        registry.emplace<object_type::light>(light);
-        registry.emplace<color>(light, vec4(1.f));
-        registry.emplace<model>(light, mat4(1.f));
-        registry.patch<model>(light, [&] (auto &m) { m.value = translate(m.value, position); });
-        registry.patch<model>(light, [] (auto &m) { m.value = scale(m.value, vec3(0.2f)); });
-    }
-
-    auto room = registry.create();
-    registry.emplace<object_type::room>(room);
-    registry.emplace<color>(room, vec4(vec3(0.1), 1));
-    registry.emplace<model>(room, mat4(1.f));
-    registry.patch<model>(room, [] (auto &m) { m.value = scale(m.value, vec3(5)); });
-
-    /* --- normal matrix generation --- */
-    for (auto view = registry.view<model>(); auto entity: view)
-        registry.emplace<normal_mat>(entity, transpose(inverse(view.get<model>(entity).value)));
-}
-
-template<typename T>
-vector<instance_data> make_instances_of(entt::registry &registry) {
-    vector<instance_data> instances = {};
-    for (auto view = registry.view<normal_mat, model, color, T>(); auto entity: view) {
-        auto [n, m, c] = view.get(entity);
-        instances.push_back(instance_data(n.value, m.value, c.value, -1));
-    }
-    return instances;
-}
-
-vector<vec4> get_light_positions(entt::registry &registry) {
-    vector<vec4> positions = {};
-    for (auto view = registry.view<model, object_type::light>(); auto entity: view) {
-        auto [m] = view.get(entity);
-        vec3 position = m.value[3];
-        positions.push_back(vec4(position.x, position.y, position.z, 0.0f));
-    }
-    return positions;
-}
-
-template<size_t N>
-vector<gl::texture> load_textures(array<path, N> paths) {
+vector<gl::texture> make_textures() {
+    constexpr size_t n = 2;
+    array<path, n> filenames = {
+        "/home/andrew/Source/geometry++/assets/8k_stars.jpg",
+        "/home/andrew/Source/geometry++/assets/8k_earth_daymap.jpg"
+    };
     vector<gl::texture> textures;
-    textures.reserve(N);
+    textures.reserve(2);
     uint8_t * pixels;
     int x, y, channels;
     stbi_set_flip_vertically_on_load(false);
-    for (size_t i = 0; i < N; ++i) {
-        logger::info("path = {}", paths[i].c_str());
-        pixels = stbi_load(paths[i].c_str(), &x, &y, &channels, STBI_default);
+    for (size_t i = 0; i < n; ++i) {
+        pixels = stbi_load(filenames[i].c_str(), &x, &y, &channels, STBI_default);
         if (pixels == nullptr)
-            logger::error("texture data = nullptr");
+            logger::error("texture data = nullptr (path = {})", filenames[i].c_str());
         textures.push_back(gl::make_texture(pixels, x, y, channels));
         stbi_image_free(pixels);
     }
     return textures;
 }
 
-/* --- */
+enum {
+    mesh_index_sphere_32x32,
+    mesh_index_sphere_64x64,
+    mesh_index_inner_cube
+};
+
+vector<gl::mesh> make_meshes() {
+    vector<gl::mesh> meshes;
+    meshes.reserve(3);
+    meshes.push_back(gl::make_mesh(
+        generate_grid_indices(32, 32),
+        generate_surface(32, 32, sphere),
+        generate_normals(32, 32, sphere),
+        generate_texcoords(32, 32)
+    ));
+    meshes.push_back(gl::make_mesh(
+        generate_grid_indices(64, 64),
+        generate_surface(64, 64, sphere),
+        generate_normals(64, 64, sphere),
+        generate_texcoords(64, 64)
+    ));
+    auto cube = create_cube_cw();
+    meshes.push_back(gl::make_mesh(
+        cube.indices,
+        cube.positions,
+        cube.normals,
+        cube.texcoords
+    ));
+    return meshes;
+}
+
+struct model_component {
+    mat4 model_matrix;
+    mat4 normal_matrix;
+};
+
+struct color_component {
+    vec4 value;
+};
+
+struct texture_component {
+    uint32_t index;
+};
+
+struct mesh_component {
+    uint32_t index;
+};
+
+struct light_source_component {
+    vec3 position;
+};
+
+vector<vec4> light_positions = {
+    vec4(2),
+};
+
+void create_entities(entt::registry &reg) {
+    {
+        auto room = reg.create();
+        const mat4 S = scale(mat4(1), vec3(5));
+        const mat4 M = S;
+        reg.emplace<model_component>(room, M, transpose(inverse(M)));
+        reg.emplace<mesh_component> (room, mesh_index_inner_cube);
+        reg.emplace<texture_component>(room, texture_index_stars);
+    }
+
+    {
+        auto planet = reg.create();
+        const mat4 T = translate(mat4(1), vec3(-1));
+        const mat4 S = scale(mat4(1), vec3(1.5));
+        const mat4 M = S * T;
+        reg.emplace<model_component>  (planet, M, transpose(inverse(M)));
+        reg.emplace<mesh_component>   (planet, mesh_index_sphere_64x64);
+        reg.emplace<texture_component>(planet, texture_index_earth_daymap);
+    }
+
+    for (auto & position : light_positions) {
+        auto e = reg.create();
+        const mat4 T = translate(mat4(1), vec3(position));
+        const mat4 S = scale(mat4(1), vec3(0.2));
+        const mat4 M = S * T;
+        reg.emplace<model_component>(e, M, transpose(inverse(M)));
+        reg.emplace<mesh_component> (e, mesh_index_sphere_32x32);
+        reg.emplace<color_component>(e, vec4(1));
+        reg.emplace<light_source_component>(e, vec3(position));
+    }
+}
+
 int main()
 {
     glfw::set_default_error_handler();
@@ -289,8 +330,6 @@ int main()
     window.on_cursor(cursor_callback);
     window.set_cursor_mode(glfw::CursorMode::Disabled);
 
-    imgui gui(window.handle);
-
     gl::load(glfw::get_proc_address);
     gl::set_default_debug_message_handler();
     gl::enable(GL_DEBUG_OUTPUT);
@@ -298,54 +337,62 @@ int main()
     gl::enable(GL_DEPTH_TEST);
     gl::enable(GL_CULL_FACE);
 
-    int m;
-    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &m);
-    logger::info("GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS = {}", m);
+    imgui gui(window.handle);
+
+    vector<gl::texture> textures = make_textures();
+    vector<gl::mesh> meshes = make_meshes();
+
+    /* --- entities --- */
+    entt::registry registry;
+    create_entities(registry);
+    vector<vector<instance_data>> instance_groups(meshes.size());
+    for (auto entity : registry.view<model_component, mesh_component>()) {
+        auto &model = registry.get<model_component>(entity);
+        instance_data data = {
+            .normal_matrix = model.normal_matrix,
+            .model_matrix = model.model_matrix
+        };
+        if (registry.all_of<texture_component>(entity)) {
+            auto &texture = registry.get<texture_component>(entity);
+            data.texture_index = texture.index;
+        } else if (registry.all_of<color_component>(entity)) {
+            auto &color = registry.get<color_component>(entity);
+            data.color = color.value;
+            data.texture_index = -1;
+        } else {
+            logger::warn("entity has neither color nor texture");
+            data.color = vec4(1, 0, 0, 1);
+        }
+
+        auto &mesh = registry.get<mesh_component>(entity);
+        instance_groups[mesh.index].push_back(data);
+    }
+
+    vector<instance_data> instances;
+    vector<size_t>        instance_group_offsets;
+    for (auto &instance_group : instance_groups) {
+        instance_group_offsets.push_back(instances.size() * sizeof(instance_data));
+        instances.insert(instances.end(), instance_group.begin(), instance_group.end());
+    }
+
+    gl::buffer instances_buffer = gl::store(span(instances));
+    gl::buffer light_positions_buffer = gl::store(span(light_positions));
 
     /* --- shaders --- */
     gl::shader vs(GL_VERTEX_SHADER), fs(GL_FRAGMENT_SHADER);
-    vs.binary(GL_SHADER_BINARY_FORMAT_SPIR_V, span(_binary_shader_vert_glsl_spv_start, _binary_shader_vert_glsl_spv_end));
+    vs.binary(GL_SHADER_BINARY_FORMAT_SPIR_V, span(_binary_main_vert_glsl_spv_start, _binary_main_vert_glsl_spv_end));
     vs.specialize();
-    fs.binary(GL_SHADER_BINARY_FORMAT_SPIR_V, span(_binary_shader_frag_glsl_spv_start, _binary_shader_frag_glsl_spv_end));
-    fs.specialize();
+    fs.binary(GL_SHADER_BINARY_FORMAT_SPIR_V, span(_binary_main_frag_glsl_spv_start, _binary_main_frag_glsl_spv_end));
+    fs.specialize("main", {
+        {constant_texture_count, 2}
+    });
     gl::program program;
     program.attach_shader(vs);
     program.attach_shader(fs);
     program.link();
     /* --- */
 
-    entt::registry registry;
-    create_entities(registry);
-    vector<instance_data> main_instances = make_instances_of<object_type::main>(registry);
-    vector<instance_data> light_instances = make_instances_of<object_type::light>(registry);
-    vector<vec4> light_positions = get_light_positions(registry);
-    vector<instance_data> room_instances = make_instances_of<object_type::room>(registry);
-
-    /* --- textures --- */
-    array<path, 2> texture_filenames = {"8k_stars.jpg", "8k_earth_daymap.jpg"};
-    for (path &f : texture_filenames)
-        f = "/home/andrew/Source/geometry++/assets" / f;
-    vector<gl::texture> textures = load_textures(texture_filenames);
-#if 0
-    gl::make_texture_handle_resident(textures[0].get_handle());
-    gl::make_texture_handle_resident(textures[1].get_handle());
-#endif
-    for (auto &data : room_instances)
-        data.texture_index = 0;
-    for (auto &data : main_instances)
-        data.texture_index = 1;
-
-    gl::bind_texture_units(binding_textures, span(textures));
-    /* --- */
-
-    gl::buffer main_instances_buffer  = gl::store(span(main_instances));
-    gl::buffer light_instances_buffer = gl::store(span(light_instances));
-    gl::buffer room_instances_buffer  = gl::store(span(room_instances));
-
-    gl::buffer light_positions_buffer = gl::store(span(light_positions));
-    gl::bind_shader_storage_buffer(binding_light_position_array, light_positions_buffer);
-
-    /* --- uniform buffer --- */
+    /* --- uniforms --- */
     gl::buffer ubo_buffer = gl::malloc(sizeof(uniform_buffer));
     ub = ubo_buffer.data<uniform_buffer>();
     ub->view_matrix = glm::lookAt(vec3(0, 0, 5), vec3(0), vec3(0, 1, 0));
@@ -354,29 +401,13 @@ int main()
     ub->diffuse = 1.f;
     ub->specular = .5f;
     ub->specular_power = 8;
-    ub->enable_light = false;
+    ub->enable_light = 1;
+    /* --- */
+
     gl::bind_uniform_buffer(binding_uniform_buffer, ubo_buffer);
-    /* --- */
-
-    /* --- mesh generation --- */
-    gl::mesh light_m = gl::make_mesh(
-        generate_grid_indices(32, 32),
-        {
-            generate_surface(32, 32, sphere),
-        }
-    );
-
-    int w = 64, h = 64;
-    gl::mesh main_m = gl::make_mesh(
-        generate_grid_indices(w, h),
-        generate_surface(w, h, sphere),
-        generate_normals(w, h, sphere),
-        generate_texcoords(w, h)
-    );
-
-    auto cube = create_cube_cw();
-    gl::mesh walls_m = gl::make_mesh(cube.indices, cube.positions, cube.normals, cube.texcoords);
-    /* --- */
+    gl::bind_shader_storage_buffer(binding_instances_data, instances_buffer);
+    gl::bind_texture_units(binding_textures, span(textures));
+    gl::bind_shader_storage_buffer(binding_light_positions, light_positions_buffer);
 
     double dt = 0;
     double last_frame_time = 0;
@@ -394,28 +425,26 @@ int main()
 
         gl::clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         gl::clear_color(screen_color);
-
         program.use();
-        ub->enable_light = true;
-        gl::bind_shader_storage_buffer(binding_instance_data_array, main_instances_buffer);
-        main_m.draw(gl::DrawMode::Triangles, main_instances.size());
 
-        gl::bind_shader_storage_buffer(binding_instance_data_array, room_instances_buffer);
-        walls_m.draw(gl::DrawMode::Triangles);
-
-        gl::bind_shader_storage_buffer(binding_instance_data_array, light_instances_buffer);
-        light_m.draw(gl::DrawMode::Triangles, light_instances.size());
+        for (size_t i = 0; i < meshes.size(); ++i) {
+            if (instance_groups[i].size() == 0)
+                continue;
+            static_assert(sizeof(instance_data) == 256);
+            gl::bind_shader_storage_buffer(
+                binding_instances_data,
+                instances_buffer,
+                instance_group_offsets[i],
+                instance_groups[i].size() * sizeof(instance_data)
+            );
+            meshes[i].draw(gl::DrawMode::Triangles, instance_groups[i].size());
+        }
 
         gui.new_frame(1 / dt, glm::value_ptr(screen_color), &ub->ambient, &ub->diffuse, &ub->specular, &ub->specular_power);
         gui.render();
 
         window.swap_buffers();
     }
-
-#if 0
-    for (auto &t : textures)
-        gl::make_texture_handle_non_resident(t.get_handle());
-#endif
 
     return 0;
 }

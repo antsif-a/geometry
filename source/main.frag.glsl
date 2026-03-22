@@ -15,7 +15,8 @@ layout (std430, binding = 2) buffer _2 {
     vec4 light_positions[];
 };
 
-layout (binding = 3) uniform sampler2D textures[2];
+layout (constant_id = 0) const uint    texture_count = 32U;
+layout (binding = 3) uniform sampler2D textures[texture_count];
 
 layout (location = 0) in vec3 fragment_position;
 layout (location = 1) in vec3 fragment_normal;
